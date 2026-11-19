@@ -9,11 +9,30 @@ from machine import Pin
 from machine import Pin, I2C
 from max30102 import MAX30102
 
+#Sheets implementation
+import json
+import os
+import socket
+import network
+
+from secrets import (
+    WIFI_SSID,
+    WIFI_PASSWORD,
+    SHEETS_URL,
+    SHEETS_TOKEN
+)
+
+try:
+    import tls
+except ImportError:
+    tls = None
+    import ssl
+
 #import FingerTest
 i2c = I2C(
-    0,
-    scl=Pin(1),
-    sda=Pin(0),
+    1,
+    scl=Pin(27),
+    sda=Pin(26),
     freq=400000
 )
 
@@ -21,38 +40,149 @@ print("Devices:", i2c.scan())
 
 sensor = MAX30102(i2c)
 
+boot_id = int.from_bytes(os.urandom(4), "little")
+
+wlan = network.WLAN(network.STA_IF)
+
+def connect_wifi():
+    if wlan.isconnected():
+        return
+
+    print("Connecting to WiFi...")
+    wlan.active(True)
+    wlan.connect(WIFI_SSID, WIFI_PASSWORD)
+
+    timeout = 15
+    while timeout > 0:
+        if wlan.isconnected():
+            print("WiFi connected")
+            print(wlan.ifconfig())
+            return
+
+        time.sleep(1)
+        timeout -= 1
+
+    print("WiFi connection failed")
+
+
+def https_post(url, body, timeout=15):
+    _, _, host, path = url.split("/", 3)
+
+    addr = socket.getaddrinfo(
+        host,
+        443,
+        0,
+        socket.SOCK_STREAM
+    )[0][-1]
+
+    sock = socket.socket()
+    sock.settimeout(timeout)
+
+    try:
+        sock.connect(addr)
+
+        if tls:
+            ctx = tls.SSLContext(tls.PROTOCOL_TLS_CLIENT)
+            ctx.verify_mode = tls.CERT_NONE
+            sock = ctx.wrap_socket(
+                sock,
+                server_hostname=host
+            )
+        else:
+            sock = ssl.wrap_socket(
+                sock,
+                server_hostname=host
+            )
+
+        data = body.encode()
+
+        sock.write(
+            (
+                "POST /{} HTTP/1.1\r\n"
+                "Host: {}\r\n"
+                "Content-Type: application/json\r\n"
+                "Content-Length: {}\r\n"
+                "Connection: close\r\n\r\n"
+            ).format(path, host, len(data)).encode()
+        )
+
+        sock.write(data)
+
+        status_line = sock.readline()
+        return int(status_line.split()[1])
+
+    finally:
+        sock.close()
+
+
+def send_to_sheets(bpm): #------------------------------------------------------Send to Sheets--------------------------------------------
+    
+
+    if not wlan.isconnected():
+        print("WiFi Connection Error")
+        return
+
+    body = json.dumps({
+        "boot": boot_id,
+        "bpm": bpm,
+        "token": SHEETS_TOKEN
+    })
+
+    try:
+        code = https_post(
+            SHEETS_URL,
+            body
+        )
+        print("Sheets HTTP:", code)
+
+    except Exception as e:
+        print("Upload failed:", e)
+
 red, ir = sensor.read_sequential(10)
 
-#print("Red:", red)
-#print("IR:", ir)
 
-def sensor_read():
+
+#print("Red:", red)
+
+
+#print("IR:", ir)
+bpmOld = 0
+
+def sensor_read():#---------------------------------------------------------Sensor Read------------------------------------------------------
     red, ir = sensor.read_sequential(100)
 
     mean_ir = sum(ir) / len(ir)
 
     raw_peaks = []
 
-    for i in range(1, len(ir)-1):
-        if (ir[i] > ir[i-1] and ir[i] > ir[i+1] and ir[i] > mean_ir):
+    for i in range(1, len(ir) - 1):
+        if (
+            ir[i] > ir[i - 1]
+            and ir[i] > ir[i + 1]
+            and ir[i] > mean_ir
+        ):
             raw_peaks.append(i)
 
     peaks = []
-    for p in raw_peaks:
-        if not peaks or p- peaks[-1] > 10:
-            peaks.append(p)
-    if len(peaks) >= 2:
 
+    for p in raw_peaks:
+        if not peaks or p - peaks[-1] > 10:
+            peaks.append(p)
+
+    if len(peaks) >= 2:
         intervals = []
 
         for i in range(1, len(peaks)):
-            intervals.append(peaks[i] - peaks[i-1])
+            intervals.append(peaks[i] - peaks[i - 1])
 
         avg_interval = sum(intervals) / len(intervals)
 
         bpm = 25 * 60 / avg_interval
-        
-    return bpm
+        bpmOld = int(bpm)
+        #print(bpm)
+        return int(bpm)
+
+    return bpmOld
 
 _IRQ_CENTRAL_CONNECT = const(1)
 _IRQ_CENTRAL_DISCONNECT = const(2)
@@ -133,21 +263,32 @@ class BLEText:
         return len(self._connections) > 0
 
 def demo():
+    # Start WiFi
+    connect_wifi()
+    
     # Create a BLE instance and a BLEText peripheral
     ble = bluetooth.BLE()
     ble_text = BLEText(ble,"pico2w")
 
     # Continuously read input from the terminal and send it via BLE
     while True:
-        if ble_text.is_connected():
-            
-            #line = input("Enter text to send via BLE (Ctrl+C to exit): ")
-            print("Scanning")
-            sensorVal = sensor_read
-            print("BPM:", sensor_read)
-            ble_text.send_text("BPM: "+sensor_read)
-
+        print("Scanning")
+        bpm = sensor_read()
+        if bpm is None:
+                print("No BPM found")
+        if bpm is not None:
+                print("BPM:", bpm)
+                
+        send_to_sheets(bpm)
+        
+        if ble_text.is_connected():            
+            ble_text.send_text("BPM: {}".format(bpm))
 
 if __name__ == "__main__":
     print("In main")
+    print("Connecting to WiFi")
+    connect_wifi()
     demo()
+
+
+
