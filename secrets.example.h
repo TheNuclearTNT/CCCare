@@ -2,8 +2,8 @@
 // secrets.h is in .gitignore so your password and token stay off GitHub.
 #pragma once
 
-#define WIFI_SSID     "TNT"
-#define WIFI_PASSWORD "tnt_1234"
+#define WIFI_SSID     ""
+#define WIFI_PASSWORD ""
 
 // Web app URL from Deploy > Manage deployments (ends in /exec)
 #define SHEETS_URL    "https://script.google.com/macros/s/XXXXXXXX/exec"
