@@ -112,6 +112,9 @@ def https_post(url, body, timeout=15):
         sock.write(data)
 
         status_line = sock.readline()
+        # Make sure all data is read
+        while sock.readline():
+            pass
         return int(status_line.split()[1])
 
     finally:
@@ -152,6 +155,7 @@ red, ir = sensor.read_sequential(10)
 bpmOld = 0
 
 def sensor_read():#---------------------------------------------------------Sensor Read------------------------------------------------------
+    global bpmOld
     red, ir = sensor.read_sequential(100)
 
     mean_ir = sum(ir) / len(ir)
@@ -268,7 +272,7 @@ class BLEText:
 def demo():
     potentiometer = machine.ADC(28)
     button = Pin(15, Pin.IN)
-    i2c_oled = I2C(0, sda_oled=Pin(20), scl_oled=Pin(21))
+    i2c_oled = I2C(0, sda=Pin(20), scl=Pin(21))
     oled = ssd1306.SSD1306_I2C(128, 64, i2c_oled)
     age = 0
     resthr = 0
@@ -288,7 +292,7 @@ def demo():
         oled.fill(0)
         oled.text('Press button to', 0, 0)
         oled.text('select age', 0, 16)
-        oled.text(str(age), 0, 32)
+        oled.text(str(int(age)), 0, 32)
         oled.show()
         time.sleep_ms(200)
     time.sleep(1)
@@ -298,7 +302,7 @@ def demo():
         oled.text('Press button to', 0, 0)
         oled.text('select resting', 0, 16)
         oled.text('heart rate', 0, 32)
-        oled.text(str(resthr), 0, 48)
+        oled.text(str(int(resthr)), 0, 48)
         oled.show()
         time.sleep_ms(200)
     oled.fill(0)
@@ -310,35 +314,39 @@ def demo():
 
     # Continuously read input from the terminal and send it via BLE
     while True:
-        print("Scanning")
+        print("Starting scan")
         bpm = sensor_read()
+        print("Scan done")
         if bpm is None:
-                print("No BPM found")
+            print("No BPM found")
+        
         if bpm is not None:
-                print("BPM:", bpm)    
-                oled.fill(0)
-                oled.text("Heart rate:", 0, 0)
-                oled.text(str(bpm), 0, 16)      
-                if bpm < lowhr:
-                    oled.text("Heartrate too low", 0, 32)
-                    time.sleep(5)
-                    if ble_text.is_connected():            
-                        ble_text.send_text("Heartrate too low. BPM: {}".format(bpm))
-                elif bpm > highhr:
-                    oled.text("Heartrate too high", 0, 32)
-                    time.sleep(5)
-                    if ble_text.is_connected():            
-                        ble_text.send_text("Heartrate too high. BPM: {}".format(bpm))
-                oled.show()
+            print("BPM:", bpm)    
+            oled.fill(0)
+            oled.text("Heart rate:", 0, 0)
+            oled.text(str(bpm), 0, 16)      
+            if bpm < lowhr:
+                oled.text("Heartrate too low", 0, 32)
+                time.sleep(5)
+                if ble_text.is_connected():            
+                    ble_text.send_text("Heartrate too low. BPM: {}".format(bpm))
+            elif bpm > highhr:
+                oled.text("Heartrate too high", 0, 32)
+                time.sleep(5)
+                if ble_text.is_connected():            
+                    ble_text.send_text("Heartrate too high. BPM: {}".format(bpm))
+            oled.show()
 
                 
         send_to_sheets(bpm)
         
+        #Pause 2 seconds to not send too many http calls
+        #time.sleep(2)
 
 if __name__ == "__main__":
     print("In main")
-    print("Connecting to WiFi")
-    connect_wifi()
+    #print("Connecting to WiFi")
+    #connect_wifi()
     demo()
 
 
