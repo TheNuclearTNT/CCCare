@@ -1,6 +1,7 @@
 /**
  * Receives heart rate readings from the Pico 2 W and logs them to the sheet.
  * Expected POST body: {"boot": <number>, "bpm": <number>, "token": "<secret>"}
+ * Optional "alert": "<text>" is written to column B instead of the number and the row turns red.
  *
  * Setup:
  *  1. Project Settings > Script properties: add "token" = same value as SHEETS_TOKEN in secrets.h
@@ -21,8 +22,9 @@ function doPost(e) {
   const token = props.getProperty('token');
   if (!token || d.token !== token) return text_('unauthorized');
 
+  const alert = typeof d.alert === 'string' ? d.alert.slice(0, 100) : '';
   const bpm = Number(d.bpm);
-  if (!Number.isFinite(bpm) || bpm < 30 || bpm > 250) return text_('skipped');
+  if (!alert && (!Number.isFinite(bpm) || bpm < 30 || bpm > 250)) return text_('skipped');
   if (d.boot === undefined || d.boot === null) return text_('missing boot');
 
   const lock = LockService.getScriptLock();
@@ -62,7 +64,7 @@ function doPost(e) {
     } else {
       sheet.insertRowAfter(2);
     }
-    sheet.getRange(3, 1, 1, 2).setValues([[new Date(), bpm]]);
+    sheet.getRange(3, 1, 1, 2).setValues([[new Date(), alert || bpm]]);
     sheet.getRange(3, 1).setNumberFormat('yyyy-mm-dd hh:mm:ss');
 
     // Highlight against the HRR target zone:
@@ -76,7 +78,9 @@ function doPost(e) {
     const hasLow = lowCell !== '' && Number.isFinite(low);
     const hasHigh = highCell !== '' && Number.isFinite(high);
     let color = null;
-    if (hasHigh && bpm > high) {
+    if (alert) {
+      color = '#ff0000'; // e.g. "Heart Rate Too High!"
+    } else if (hasHigh && bpm > high) {
       color = '#ff0000';
     } else if (hasLow && bpm < low) {
       color = '#ffff00';
