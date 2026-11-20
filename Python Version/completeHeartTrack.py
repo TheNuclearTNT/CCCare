@@ -7,7 +7,7 @@ from ble_advertising import advertising_payload
 from micropython import const
 from machine import Pin
 from machine import Pin, I2C
-from max30102 import MAX30102
+from max30102 import MAX30102, REG_FIFO_WR_PTR, REG_OVF_COUNTER, REG_FIFO_RD_PTR
 
 #Sheets implementation
 import json
@@ -115,18 +115,21 @@ def https_post(url, body, timeout=15):
         sock.close()
 
 
-def send_to_sheets(bpm): #------------------------------------------------------Send to Sheets--------------------------------------------
-    
+def send_to_sheets(bpm, alert=None): #------------------------------------------------------Send to Sheets--------------------------------------------
+    connect_wifi()  # reconnect if the WiFi dropped
 
     if not wlan.isconnected():
         print("WiFi Connection Error")
         return
 
-    body = json.dumps({
+    data = {
         "boot": boot_id,
         "bpm": bpm,
         "token": SHEETS_TOKEN
-    })
+    }
+    if alert:
+        data["alert"] = alert  # Apps Script writes this text instead of the number
+    body = json.dumps(data)
 
     try:
         code = https_post(
@@ -146,10 +149,47 @@ red, ir = sensor.read_sequential(10)
 
 
 #print("IR:", ir)
-bpmOld = 0
+bpmOld = 0  # last good BPM, reported when a window has too few peaks
 
-def sensor_read():#---------------------------------------------------------Sensor Read------------------------------------------------------
-    red, ir = sensor.read_sequential(100)
+REPORT_MS = 5000      # send a reading to Sheets every 5 seconds
+MIN_WINDOW_MS = 3000  # shortest stretch of signal used for one BPM
+MAX_BPM = 220         # anything higher is reported as "Heart Rate Too High!"
+HIGH_MSG = "Heart Rate Too High!"
+# Peaks closer than this many samples are treated as one beat. At 25 samples/s,
+# 6 samples allows up to 250 BPM, so readings above MAX_BPM can be detected.
+# (It was 11 samples, which capped readings at about 136 BPM.)
+MIN_PEAK_GAP = 6
+
+
+def flush_fifo():
+    # Throw away samples that piled up while the Pico was uploading, so each
+    # window is one unbroken stretch of signal
+    sensor.set_config(REG_FIFO_WR_PTR, 0)
+    sensor.set_config(REG_OVF_COUNTER, 0)
+    sensor.set_config(REG_FIFO_RD_PTR, 0)
+
+
+def read_window(ms):
+    # Read every sample the sensor produces for `ms` milliseconds (25 per second)
+    red, ir = [], []
+    start = time.ticks_ms()
+    while time.ticks_diff(time.ticks_ms(), start) < ms:
+        n = sensor.get_data_present()
+        if n == 0:
+            time.sleep_ms(10)
+            continue
+        for _ in range(n):
+            r, i = sensor.read_fifo()
+            red.append(r)
+            ir.append(i)
+    return red, ir
+
+
+def sensor_read(window_ms):#---------------------------------------------------------Sensor Read------------------------------------------------------
+    global bpmOld  # without this, bpmOld is a new local variable and return bpmOld crashes
+    red, ir = read_window(window_ms)
+    if len(ir) < 3:
+        return bpmOld if bpmOld > 0 else None
 
     mean_ir = sum(ir) / len(ir)
 
@@ -166,7 +206,7 @@ def sensor_read():#---------------------------------------------------------Sens
     peaks = []
 
     for p in raw_peaks:
-        if not peaks or p - peaks[-1] > 10:
+        if not peaks or p - peaks[-1] >= MIN_PEAK_GAP:
             peaks.append(p)
 
     if len(peaks) >= 2:
@@ -177,12 +217,14 @@ def sensor_read():#---------------------------------------------------------Sens
 
         avg_interval = sum(intervals) / len(intervals)
 
-        bpm = 25 * 60 / avg_interval
-        bpmOld = int(bpm)
+        bpm = int(25 * 60 / avg_interval)
+        if bpm <= MAX_BPM:
+            bpmOld = bpm  # only remember readings in the normal range
         #print(bpm)
-        return int(bpm)
+        return bpm
 
-    return bpmOld
+    # No beat found in this window: reuse the last good BPM (None if there isn't one yet)
+    return bpmOld if bpmOld > 0 else None
 
 _IRQ_CENTRAL_CONNECT = const(1)
 _IRQ_CENTRAL_DISCONNECT = const(2)
@@ -270,19 +312,33 @@ def demo():
     ble = bluetooth.BLE()
     ble_text = BLEText(ble,"pico2w")
 
-    # Continuously read input from the terminal and send it via BLE
+    # Measure the heart rate and report it every REPORT_MS milliseconds
+    next_report = time.ticks_add(time.ticks_ms(), REPORT_MS)
     while True:
+        window = time.ticks_diff(next_report, time.ticks_ms())
+        if window < MIN_WINDOW_MS:
+            # the last upload ran long; push this report back so the
+            # measurement still gets at least MIN_WINDOW_MS of signal
+            window = MIN_WINDOW_MS
+            next_report = time.ticks_add(time.ticks_ms(), window)
+
         print("Scanning")
-        bpm = sensor_read()
+        flush_fifo()
+        bpm = sensor_read(window)
         if bpm is None:
-                print("No BPM found")
-        if bpm is not None:
-                print("BPM:", bpm)
-                
-        send_to_sheets(bpm)
-        
-        if ble_text.is_connected():            
-            ble_text.send_text("BPM: {}".format(bpm))
+            print("No BPM found")
+        elif bpm > MAX_BPM:
+            print(HIGH_MSG, "({} BPM)".format(bpm))
+            send_to_sheets(bpm, alert=HIGH_MSG)
+            if ble_text.is_connected():
+                ble_text.send_text(HIGH_MSG)
+        else:
+            print("BPM:", bpm)
+            send_to_sheets(bpm)
+            if ble_text.is_connected():
+                ble_text.send_text("BPM: {}".format(bpm))
+
+        next_report = time.ticks_add(next_report, REPORT_MS)
 
 if __name__ == "__main__":
     print("In main")
