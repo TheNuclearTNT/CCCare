@@ -3,6 +3,7 @@ import struct
 import time
 import machine
 import ubinascii
+import ssd1306
 from ble_advertising import advertising_payload
 from micropython import const
 from machine import Pin
@@ -27,6 +28,8 @@ try:
 except ImportError:
     tls = None
     import ssl
+
+
 
 #import FingerTest
 i2c = I2C(
@@ -263,12 +266,47 @@ class BLEText:
         return len(self._connections) > 0
 
 def demo():
+    potentiometer = machine.ADC(28)
+    button = Pin(15, Pin.IN)
+    i2c_oled = I2C(0, sda_oled=Pin(20), scl_oled=Pin(21))
+    oled = ssd1306.SSD1306_I2C(128, 64, i2c_oled)
+    age = 0
+    resthr = 0
+    oled.fill(0)
+    oled.show()
+    time.sleep(1)
+    
     # Start WiFi
     connect_wifi()
     
     # Create a BLE instance and a BLEText peripheral
     ble = bluetooth.BLE()
     ble_text = BLEText(ble,"pico2w")
+
+    while button.value() == 0:
+        age = (potentiometer.read_u16() / 65535.0) * 100.0
+        oled.fill(0)
+        oled.text('Press button to', 0, 0)
+        oled.text('select age', 0, 16)
+        oled.text(str(age), 0, 32)
+        oled.show()
+        time.sleep_ms(200)
+    time.sleep(1)
+    while button.value() == 0:
+        resthr = ((potentiometer.read_u16() / 65535.0) * 100.0) + 30.0
+        oled.fill(0)
+        oled.text('Press button to', 0, 0)
+        oled.text('select resting', 0, 16)
+        oled.text('heart rate', 0, 32)
+        oled.text(str(resthr), 0, 48)
+        oled.show()
+        time.sleep_ms(200)
+    oled.fill(0)
+    oled.show()
+    maxhr = 220 - age
+    hrreserve = maxhr - resthr
+    lowhr = 0.4 * hrreserve + resthr
+    highhr = 0.6 * hrreserve + resthr
 
     # Continuously read input from the terminal and send it via BLE
     while True:
@@ -277,12 +315,25 @@ def demo():
         if bpm is None:
                 print("No BPM found")
         if bpm is not None:
-                print("BPM:", bpm)
+                print("BPM:", bpm)    
+                oled.fill(0)
+                oled.text("Heart rate:", 0, 0)
+                oled.text(str(bpm), 0, 16)      
+                if bpm < lowhr:
+                    oled.text("Heartrate too low", 0, 32)
+                    time.sleep(5)
+                    if ble_text.is_connected():            
+                        ble_text.send_text("Heartrate too low. BPM: {}".format(bpm))
+                elif bpm > highhr:
+                    oled.text("Heartrate too high", 0, 32)
+                    time.sleep(5)
+                    if ble_text.is_connected():            
+                        ble_text.send_text("Heartrate too high. BPM: {}".format(bpm))
+                oled.show()
+
                 
         send_to_sheets(bpm)
         
-        if ble_text.is_connected():            
-            ble_text.send_text("BPM: {}".format(bpm))
 
 if __name__ == "__main__":
     print("In main")
