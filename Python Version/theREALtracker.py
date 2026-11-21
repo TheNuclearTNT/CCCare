@@ -1,5 +1,4 @@
 import bluetooth
-import struct
 import time
 import machine
 import ubinascii
@@ -29,9 +28,6 @@ except ImportError:
     tls = None
     import ssl
 
-
-
-#import FingerTest
 i2c = I2C(
     1,
     scl=Pin(27),
@@ -39,10 +35,9 @@ i2c = I2C(
     freq=400000
 )
 
-print("Devices:", i2c.scan())
+#print("Devices:", i2c.scan())
 
 sensor = MAX30102(i2c)
-
 
 boot_id = int.from_bytes(os.urandom(4), "little")
 
@@ -67,19 +62,13 @@ def connect_wifi():
 
     print("WiFi connection failed")
 
-time.sleep(1)
-print("Before WiFi:", sensor.get_data_present())
-
-# Start WiFi
 connect_wifi()
 
-time.sleep(1)
-print("After WiFi:", sensor.get_data_present())
 
+#Sensor must be re-initialized after each WiFi connection attempt
 sensor = MAX30102(i2c)
-
 time.sleep(1)
-print("After reinit:", sensor.get_data_present())
+
 def https_post(url, body, timeout=15):
     _, _, host, path = url.split("/", 3)
 
@@ -169,41 +158,11 @@ def send_to_sheets(bpm, alert=None): #------------------------------------------
 #print("IR:", ir)
 
 REPORT_MS = 5000      # send a reading to Sheets every 5 seconds
-MIN_WINDOW_MS = 3000  # shortest stretch of signal used for one BPM
-MAX_BPM = 220         # anything higher is reported as "Heart Rate Too High!"
+
 HIGH_MSG = "Heart Rate Too High!"
 # Peaks closer than this many samples are treated as one beat. At 25 samples/s,
 # 6 samples allows up to 250 BPM, so readings above MAX_BPM can be detected.
 # (It was 11 samples, which capped readings at about 136 BPM.)
-MIN_PEAK_GAP = 6
-
-
-def flush_fifo():
-    # Throw away samples that piled up while the Pico was uploading, so each
-    # window is one unbroken stretch of signal
-    sensor.set_config(REG_FIFO_WR_PTR, 0)
-    sensor.set_config(REG_OVF_COUNTER, 0)
-    sensor.set_config(REG_FIFO_RD_PTR, 0)
-
-
-def read_window(ms):
-    # Read every sample the sensor produces for `ms` milliseconds (25 per second)
-    print("read_window entered")
-    
-    red, ir = [], []
-    start = time.ticks_ms()
-    while time.ticks_diff(time.ticks_ms(), start) < ms:
-        n = sensor.get_data_present()
-        if n == 0:
-            time.sleep_ms(10)
-            continue
-        print("n =",n)
-        for _ in range(n):
-            r, i = sensor.read_fifo()
-            red.append(r)
-            ir.append(i)
-    print("exiting read_window")
-    return red, ir
 
 
 bpmOld = 0
@@ -320,7 +279,7 @@ def demo():
     #declare pins for potentiometer, button, buzzer, and oled
     potentiometer = machine.ADC(28)
     button = Pin(15, Pin.IN)
-    buzzer = Pic(14, Pin.OUT)
+    buzzer = Pin(14, Pin.OUT)
     i2c_oled = I2C(0, sda=Pin(20), scl=Pin(21))
     oled = ssd1306.SSD1306_I2C(128, 64, i2c_oled)
 
@@ -370,7 +329,7 @@ def demo():
 
     #delay for user to attach monitor
     oled.fill(0)
-    oled.text('Attach monitor'), 0, 0)
+    oled.text('Attach monitor', 0, 0)
     oled.show()
     time.sleep(10) #10s for demo purposes, would be 30
 
@@ -396,8 +355,7 @@ def demo():
         
 
         print("Starting scan")
-        #print(sensor.read_sequential(5))
-        #flush_fifo()
+        
 
         #reconnect pulse ox
         sensor = MAX30102(i2c)
@@ -435,6 +393,12 @@ def demo():
             oled.show()
 
         next_report = time.ticks_add(next_report, REPORT_MS)
+
+    # Workout complete! restart in 3 seconds
+    oled.fill(0)
+    oled.text("Workout complete!",0,0)
+    oled.text("Restarting in: ",0,16)
+    oled.text("3 seconds...",0,32)
 
 if __name__ == "__main__":
     print("In main")
