@@ -180,7 +180,7 @@ def sensor_read():
     print(len(raw_peaks))
     peaks = []
     for p in raw_peaks:
-        if not peaks or p- peaks[-1] > 10:
+        if not peaks or p- peaks[-1] > 5:
             peaks.append(p)
     if len(peaks) >= 2:
 
@@ -191,9 +191,10 @@ def sensor_read():
 
         avg_interval = sum(intervals) / len(intervals)
 
-        bpm = 25 * 60 / avg_interval
-        bpmOld = int(bpm)
-        return int(bpm)
+        bpm = 100 * 60 / avg_interval
+        if bpm > 20 and bpm < 220:
+            bpmOld = int(bpm)
+            return int(bpm)
         
     return bpmOld
 
