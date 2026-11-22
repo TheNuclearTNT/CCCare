@@ -166,7 +166,7 @@ HIGH_MSG = "Heart Rate Too High!"
 
 
 bpmOld = 0
-def sensor_read():
+def sensor_read():#-------------------------------------------------------------Sensor Read--------------------------------------------
     global bpmOld
     red, ir = sensor.read_sequential(100)
     
@@ -177,11 +177,12 @@ def sensor_read():
     for i in range(1, len(ir)-1):
         if (ir[i] > ir[i-1] and ir[i] > ir[i+1] and ir[i] > mean_ir):
             raw_peaks.append(i)
-    print(len(raw_peaks))
+    print("Raw Peaks:",len(raw_peaks))
     peaks = []
     for p in raw_peaks:
-        if not peaks or p- peaks[-1] > 5:
+        if not peaks or p- peaks[-1] > 10:
             peaks.append(p)
+    print("Filtered Peaks:", peaks)
     if len(peaks) >= 2:
 
         intervals = []
@@ -191,9 +192,10 @@ def sensor_read():
 
         avg_interval = sum(intervals) / len(intervals)
 
-        bpm = 100 * 60 / avg_interval
+        bpm = 25 * 60 / avg_interval
         if bpm > 20 and bpm < 220:
             bpmOld = int(bpm)
+            print("sensor_read(bpm):", bpm)
             return int(bpm)
         
     return bpmOld
@@ -332,22 +334,23 @@ def demo():
     oled.fill(0)
     oled.text('Attach monitor', 0, 0)
     oled.show()
-    time.sleep(10) #10s for demo purposes, would be 30
+    time.sleep(3) #10s for demo purposes, would be 30
 
     #delay for warm up period
     oled.fill(0)
     oled.text('Warm up period', 0, 0)
     oled.show()
-    time.sleep(10) #10s for demo purposes, would be 5 min
+    time.sleep(3) #10s for demo purposes, would be 5 min
 
     oled.fill(0)
     oled.text('Workout starting', 0, 0)
     oled.text('Press button to', 0, 16)
     oled.text('end workout', 0, 32)
+    oled.show()
     buzzer.value(1)
     time.sleep(0.5)
     buzzer.value(0)
-    time.sleep(10)
+    time.sleep(3)
 
     # Measure the heart rate and report it every REPORT_MS milliseconds
     next_report = time.ticks_add(time.ticks_ms(), REPORT_MS)
@@ -360,6 +363,7 @@ def demo():
 
         #reconnect pulse ox
         sensor = MAX30102(i2c)
+        #print("Devices:", i2c.scan())
 
     
         bpm = sensor_read()
@@ -374,7 +378,7 @@ def demo():
             oled.text("Heart rate:", 0, 0)
             oled.text(str(bpm), 0, 16)
             if bpm < lowhr:
-                oled.text("Heartrate too low", 0, 32)
+                oled.text("Too low!", 0, 32)
                 send_to_sheets(bpm)
                 if ble_text.is_connected():
                     ble_text.send_text("Heartrate too low. BPM: {}".format(bpm))
@@ -382,7 +386,7 @@ def demo():
                 time.sleep(0.5)
                 buzzer.value(0)
             elif bpm > highhr:
-                oled.text("Heartrate too high", 0, 32)
+                oled.text("Too high!", 0, 32)
                 send_to_sheets(bpm, alert=HIGH_MSG)
                 if ble_text.is_connected():
                     ble_text.send_text("Heartrate too high. BPM: {}".format(bpm))   
@@ -400,6 +404,9 @@ def demo():
     oled.text("Workout complete!",0,0)
     oled.text("Restarting in: ",0,16)
     oled.text("3 seconds...",0,32)
+    oled.show()
+    time.sleep(3)
+    demo()
 
 if __name__ == "__main__":
     print("In main")
